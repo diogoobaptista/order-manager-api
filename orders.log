@@ -1,0 +1,6 @@
+Created Item [ID: 2, Name: Banana]
+Create StockMovement 3 [Item: 2, Qty: 30]
+Allocated 20 of StockMovement 3 to Order 2
+Order 2 COMPLETED
+Email sent to diogomsbaptista@gmail.com for order 2
+Email sent to diogomsbaptista@gmail.com for Order 2

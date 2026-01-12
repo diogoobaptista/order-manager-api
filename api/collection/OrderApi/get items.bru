@@ -1,0 +1,16 @@
+meta {
+  name: get items
+  type: http
+  seq: 9
+}
+
+get {
+  url: http://localhost:8085/items
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

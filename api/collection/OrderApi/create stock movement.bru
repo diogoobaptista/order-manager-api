@@ -1,0 +1,24 @@
+meta {
+  name: create stock movement
+  type: http
+  seq: 12
+}
+
+post {
+  url: http://localhost:8085/stock-movements
+  body: json
+  auth: inherit
+}
+
+body:json {
+  
+  {
+      "itemId": 1,
+      "quantity": 6
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
