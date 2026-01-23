@@ -25,11 +25,12 @@ A simple Spring Boot REST API to manage orders and stock. Users can create order
 ---
 
 ## Order api collection
-- api/collection/OrderApi
+- api/collection/OrderApi -> Bruno Collection
+- api/OrderApi.json -> Postman Collection
 
 ---
 
-## Environment Variables
+## Application Properties
 
 Before running the application, set the email credentials in application.properties file
 
