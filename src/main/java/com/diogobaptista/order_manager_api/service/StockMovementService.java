@@ -1,6 +1,7 @@
 package com.diogobaptista.order_manager_api.service;
 
 import com.diogobaptista.order_manager_api.dto.StockMovementRequestDTO;
+import com.diogobaptista.order_manager_api.entity.Item;
 import com.diogobaptista.order_manager_api.entity.Order;
 import com.diogobaptista.order_manager_api.entity.StockMovement;
 import com.diogobaptista.order_manager_api.mapper.StockMovementMapper;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -24,7 +26,7 @@ public class StockMovementService {
     private final ItemRepository itemRepository;
     private final OrderRepository orderRepository;
     private final OrderAllocationService orderAllocationService;
-    private final FileLogService fileLogService; // Injeção do serviço de log
+    private final FileLogService fileLogService;
     private final StockMovementMapper mapper;
 
     public StockMovementService(StockMovementRepository repository,
@@ -50,43 +52,77 @@ public class StockMovementService {
     }
 
     public Optional<StockMovement> createStockMovement(StockMovementRequestDTO dto) {
-        return itemRepository.findById(dto.getItemId())
-                .map(item -> {
-                    List<Order> pendingOrders = orderRepository.findAll().stream()
-                            .filter(o -> !o.isComplete())
-                            .filter(o -> o.getItem().getId().equals(item.getId()))
-                            .collect(Collectors.toList());
 
-                    if (pendingOrders.isEmpty()) {
-                        logAndWrite(String.format("StockMovement for Item %d - No pending orders found", item.getId()), "WARN");
-                        return Optional.<StockMovement>empty();
-                    }
+        Order order = getOrder(dto.getOrderId());
+        Item item = order.getItem();
 
-                    int availableStock = item.getStockQuantity();
-                    if (dto.getQuantity() > availableStock) {
-                        logAndWrite(String.format("Fail StockMovement for Item %d - Insufficient stock (Req: %d, Avail: %d)",
-                                item.getId(), dto.getQuantity(), availableStock), "WARN");
-                        return Optional.<StockMovement>empty();
-                    }
+        validateOrder(order);
+        int remainingQty = getRemainingQuantity(order);
+        validateRequestedQuantity(dto.getQuantity(), remainingQty, order);
 
-                    StockMovement stockMovement = mapper.toEntity(dto, item);
-                    stockMovement.setCreationDate(LocalDateTime.now());
-                    stockMovement.setQuantity(dto.getQuantity());
-                    StockMovement saved = repository.save(stockMovement);
+        int availableStock = getAvailableStock(item);
+        int allocQty = calculateAllocation(dto.getQuantity(), remainingQty, availableStock);
 
-                    item.setStockQuantity(availableStock - dto.getQuantity());
-                    itemRepository.save(item);
+        StockMovement stockMovement = mapper.toEntity(dto, item);
+        stockMovement.setQuantity(allocQty);
+        stockMovement.setCreationDate(LocalDateTime.now());
 
-                    logAndWrite(String.format("Create StockMovement %d [Item: %d, Qty: %d]",
-                            saved.getId(), item.getId(), dto.getQuantity()), "INFO");
+        StockMovement saved = repository.save(stockMovement);
 
-                    pendingOrders.forEach(order -> orderAllocationService.fulfillOrderWithStockMovement(order, saved));
+        updateItemStock(item, availableStock, allocQty);
+        orderAllocationService.fulfillOrderWithStockMovement(order, saved);
 
-                    return Optional.of(saved);
-                }).orElseGet(() -> {
-                    logAndWrite(String.format("Fail StockMovement creation - Item %d not found", dto.getItemId()), "WARN");
-                    return Optional.empty();
-                });
+        logAndWrite(
+                String.format("StockMovement %d allocated to Order %d [Qty: %d]", saved.getId(), order.getId(), allocQty),
+                "INFO"
+        );
+
+        return Optional.of(saved);
+    }
+
+    private Order getOrder(Long orderId) {
+        return orderRepository.findById(orderId)
+                .orElseThrow(() -> new NoSuchElementException("Order not found"));
+    }
+
+    private void validateOrder(Order order) {
+        if (order.isComplete()) {
+            logAndWrite(String.format("Order %d already completed", order.getId()), "WARN");
+            throw new IllegalStateException("Order already completed");
+        }
+    }
+
+    private int getRemainingQuantity(Order order) {
+        return order.getQuantity() - order.getFulfilledQuantity();
+    }
+
+    private void validateRequestedQuantity(int requestedQty, int remainingQty, Order order) {
+        if (requestedQty > remainingQty) {
+            logAndWrite(
+                    String.format("Invalid StockMovement request for Order %d - Requested: %d, Remaining: %d",
+                            order.getId(), requestedQty, remainingQty),
+                    "WARN"
+            );
+            throw new IllegalArgumentException("Requested quantity exceeds remaining quantity");
+        }
+    }
+
+    private int getAvailableStock(Item item) {
+        int stock = item.getStockQuantity();
+        if (stock <= 0) {
+            logAndWrite(String.format("No stock available for Item %d", item.getId()), "WARN");
+            throw new IllegalStateException("No stock available");
+        }
+        return stock;
+    }
+
+    private int calculateAllocation(int requestedQty, int remainingQty, int availableStock) {
+        return Math.min(requestedQty, Math.min(remainingQty, availableStock));
+    }
+
+    private void updateItemStock(Item item, int availableStock, int allocQty) {
+        item.setStockQuantity(availableStock - allocQty);
+        itemRepository.save(item);
     }
 
     private void logAndWrite(String message, String level) {

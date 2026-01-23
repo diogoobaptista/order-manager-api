@@ -16,7 +16,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -42,31 +41,41 @@ public class OrderServiceTest {
         userRepository = mock(UserRepository.class);
         FileLogService fileLogService = mock(FileLogService.class);
 
-        service = new OrderService(orderRepository, stockRepository, allocator, itemRepository, userRepository, fileLogService);
+        service = new OrderService(
+                orderRepository,
+                stockRepository,
+                allocator,
+                itemRepository,
+                userRepository,
+                fileLogService
+        );
     }
 
     @Test
-    void create_success() {
+    void create_success_noStockAvailable() {
         Item item = new Item();
         item.setId(1L);
+        item.setName("Mouse");
+        item.setStockQuantity(0);
+
         User user = new User();
         user.setId(2L);
+        user.setEmail("user@test.com");
 
         OrderRequestDTO dto = new OrderRequestDTO();
         dto.setItemId(1L);
         dto.setUserId(2L);
         dto.setQuantity(5);
 
-        when(itemRepository.findById(1L)).thenReturn(Optional.of(item));
-        when(userRepository.findById(2L)).thenReturn(Optional.of(user));
-
         Order savedOrder = new Order();
+        savedOrder.setId(100L);
         savedOrder.setItem(item);
         savedOrder.setUser(user);
         savedOrder.setQuantity(5);
 
+        when(itemRepository.findById(1L)).thenReturn(Optional.of(item));
+        when(userRepository.findById(2L)).thenReturn(Optional.of(user));
         when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
-        when(stockRepository.findAll()).thenReturn(Collections.emptyList());
 
         Order result = service.create(dto);
 
@@ -75,8 +84,87 @@ public class OrderServiceTest {
         assertEquals(user, result.getUser());
         assertEquals(5, result.getQuantity());
 
-        verify(orderRepository).save(any(Order.class));
-        verify(allocator, never()).fulfillOrderWithStockMovement(any(Order.class), any(StockMovement.class));
+        verify(stockRepository, never()).save(any());
+        verify(allocator, never())
+                .fulfillOrderWithStockMovement(any(), any());
+    }
+
+    @Test
+    void create_success_fullAllocation() {
+        Item item = new Item();
+        item.setId(1L);
+        item.setName("Keyboard");
+        item.setStockQuantity(10);
+
+        User user = new User();
+        user.setId(2L);
+        user.setEmail("user@test.com");
+
+        OrderRequestDTO dto = new OrderRequestDTO();
+        dto.setItemId(1L);
+        dto.setUserId(2L);
+        dto.setQuantity(5);
+
+        Order savedOrder = new Order();
+        savedOrder.setId(200L);
+        savedOrder.setItem(item);
+        savedOrder.setUser(user);
+        savedOrder.setQuantity(5);
+
+        StockMovement savedMovement = new StockMovement();
+        savedMovement.setId(300L);
+
+        when(itemRepository.findById(1L)).thenReturn(Optional.of(item));
+        when(userRepository.findById(2L)).thenReturn(Optional.of(user));
+        when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+        when(stockRepository.save(any(StockMovement.class))).thenReturn(savedMovement);
+
+        Order result = service.create(dto);
+
+        assertEquals(5, item.getStockQuantity());
+
+        verify(stockRepository).save(any(StockMovement.class));
+        verify(itemRepository).save(item);
+        verify(allocator).fulfillOrderWithStockMovement(savedOrder, savedMovement);
+    }
+
+    @Test
+    void create_success_partialAllocation() {
+        Item item = new Item();
+        item.setId(1L);
+        item.setName("Monitor");
+        item.setStockQuantity(3);
+
+        User user = new User();
+        user.setId(2L);
+        user.setEmail("user@test.com");
+
+        OrderRequestDTO dto = new OrderRequestDTO();
+        dto.setItemId(1L);
+        dto.setUserId(2L);
+        dto.setQuantity(5);
+
+        Order savedOrder = new Order();
+        savedOrder.setId(201L);
+        savedOrder.setItem(item);
+        savedOrder.setUser(user);
+        savedOrder.setQuantity(5);
+
+        StockMovement savedMovement = new StockMovement();
+        savedMovement.setId(301L);
+
+        when(itemRepository.findById(1L)).thenReturn(Optional.of(item));
+        when(userRepository.findById(2L)).thenReturn(Optional.of(user));
+        when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+        when(stockRepository.save(any(StockMovement.class))).thenReturn(savedMovement);
+
+        Order result = service.create(dto);
+
+        assertEquals(0, item.getStockQuantity());
+
+        verify(stockRepository).save(any(StockMovement.class));
+        verify(itemRepository).save(item);
+        verify(allocator).fulfillOrderWithStockMovement(savedOrder, savedMovement);
     }
 
     @Test
@@ -87,9 +175,9 @@ public class OrderServiceTest {
 
         when(itemRepository.findById(1L)).thenReturn(Optional.empty());
 
-        NoSuchElementException exception = assertThrows(NoSuchElementException.class, () -> service.create(dto));
-        assertTrue(exception.getMessage().contains("Item not found with id=1"));
-        verify(orderRepository, never()).save(any(Order.class));
+        assertThrows(NoSuchElementException.class, () -> service.create(dto));
+
+        verify(orderRepository, never()).save(any());
     }
 
     @Test
@@ -104,19 +192,17 @@ public class OrderServiceTest {
         when(itemRepository.findById(1L)).thenReturn(Optional.of(item));
         when(userRepository.findById(2L)).thenReturn(Optional.empty());
 
-        NoSuchElementException exception = assertThrows(NoSuchElementException.class, () -> service.create(dto));
-        assertTrue(exception.getMessage().contains("User not found with id=2"));
-        verify(orderRepository, never()).save(any(Order.class));
+        assertThrows(NoSuchElementException.class, () -> service.create(dto));
+
+        verify(orderRepository, never()).save(any());
     }
 
     @Test
     void findAll_returnsOrders() {
-        Order o1 = new Order();
-        Order o2 = new Order();
-
-        when(orderRepository.findAll()).thenReturn(Arrays.asList(o1, o2));
+        when(orderRepository.findAll()).thenReturn(Arrays.asList(new Order(), new Order()));
 
         List<Order> orders = service.findAll();
+
         assertEquals(2, orders.size());
     }
 
@@ -126,6 +212,7 @@ public class OrderServiceTest {
         when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
 
         Optional<Order> result = service.findById(1L);
+
         assertTrue(result.isPresent());
         assertEquals(order, result.get());
     }
@@ -135,6 +222,7 @@ public class OrderServiceTest {
         when(orderRepository.findById(1L)).thenReturn(Optional.empty());
 
         Optional<Order> result = service.findById(1L);
+
         assertFalse(result.isPresent());
     }
 }

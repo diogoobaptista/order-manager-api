@@ -1,15 +1,16 @@
 package com.diogobaptista.order_manager_api.dto;
 
 public class StockMovementRequestDTO {
-    public Long itemId;
-    public int quantity;
 
-    public Long getItemId() {
-        return itemId;
+    private Long orderId;
+    private int quantity;
+
+    public Long getOrderId() {
+        return orderId;
     }
 
-    public void setItemId(Long itemId) {
-        this.itemId = itemId;
+    public void setOrderId(Long orderId) {
+        this.orderId = orderId;
     }
 
     public int getQuantity() {
@@ -20,4 +21,3 @@ public class StockMovementRequestDTO {
         this.quantity = quantity;
     }
 }
-

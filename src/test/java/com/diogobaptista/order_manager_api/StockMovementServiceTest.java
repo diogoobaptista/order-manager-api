@@ -11,129 +11,202 @@ import com.diogobaptista.order_manager_api.repository.StockMovementRepository;
 import com.diogobaptista.order_manager_api.service.FileLogService;
 import com.diogobaptista.order_manager_api.service.OrderAllocationService;
 import com.diogobaptista.order_manager_api.service.StockMovementService;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.Collections;
+import java.util.Arrays;
+import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-public class StockMovementServiceTest {
+@ExtendWith(MockitoExtension.class)
+class StockMovementServiceTest {
 
-    private StockMovementRepository stockRepo;
-    private OrderRepository orderRepo;
-    private ItemRepository itemRepo;
-    private OrderAllocationService allocator;
-    private StockMovementService service;
+    @Mock
+    private StockMovementRepository repository;
+    @Mock
+    private ItemRepository itemRepository;
+    @Mock
+    private OrderRepository orderRepository;
+    @Mock
+    private OrderAllocationService orderAllocationService;
+    @Mock
+    private FileLogService fileLogService;
+    @Mock
     private StockMovementMapper mapper;
 
-    @BeforeEach
-    public void setup() {
-        stockRepo = mock(StockMovementRepository.class);
-        itemRepo = mock(ItemRepository.class);
-        orderRepo = mock(OrderRepository.class);
-        allocator = mock(OrderAllocationService.class);
-        mapper = mock(StockMovementMapper.class);
-        FileLogService fileLogService = mock(FileLogService.class);
+    @InjectMocks
+    private StockMovementService service;
 
-        service = new StockMovementService(stockRepo, itemRepo, orderRepo, allocator, fileLogService, mapper);
+
+    @Test
+    void findAll_shouldReturnAllStockMovements() {
+        List<StockMovement> list = Arrays.asList(
+                new StockMovement(),
+                new StockMovement()
+        );
+        when(repository.findAll()).thenReturn(list);
+
+        List<StockMovement> result = service.findAll();
+
+        assertEquals(2, result.size());
     }
 
     @Test
-    public void create_shouldAllocateStockToIncompleteOrders() {
+    void findById_shouldReturnOptional() {
+        StockMovement sm = new StockMovement();
+        when(repository.findById(1L)).thenReturn(Optional.of(sm));
+
+        Optional<StockMovement> result = service.findById(1L);
+
+        assertTrue(result.isPresent());
+    }
+
+
+    @Test
+    void create_shouldCreateAndAllocateStockMovement() {
         Item item = new Item();
         item.setId(1L);
         item.setStockQuantity(10);
 
-        StockMovementRequestDTO dto = new StockMovementRequestDTO();
-        dto.setItemId(1L);
-        dto.setQuantity(10);
-
-        StockMovement sm = new StockMovement();
-        sm.setId(100L);
-        sm.setItem(item);
-        sm.setQuantity(10);
-
         Order order = new Order();
-        order.setId(50L);
+        order.setId(1L);
         order.setItem(item);
         order.setQuantity(5);
-        order.setFulfilledQuantity(0);
+        order.setFulfilledQuantity(2);
 
-        when(itemRepo.findById(1L)).thenReturn(Optional.of(item));
+        StockMovementRequestDTO dto = new StockMovementRequestDTO();
+        dto.setOrderId(1L);
+        dto.setQuantity(3);
+
+        StockMovement sm = new StockMovement();
+        sm.setId(99L);
+
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
         when(mapper.toEntity(dto, item)).thenReturn(sm);
-        when(stockRepo.save(any())).thenReturn(sm);
-        when(orderRepo.findAll()).thenReturn(Collections.singletonList(order));
+        when(repository.save(any())).thenReturn(sm);
 
         Optional<StockMovement> result = service.createStockMovement(dto);
 
         assertTrue(result.isPresent());
-        verify(allocator, times(1)).fulfillOrderWithStockMovement(order, sm);
+        assertEquals(7, item.getStockQuantity());
+
+        verify(itemRepository).save(item);
+        verify(orderAllocationService).fulfillOrderWithStockMovement(order, sm);
+        verify(fileLogService).appendLine(contains("StockMovement"));
+    }
+
+    /* ---------- Exceptions ---------- */
+
+    @Test
+    void create_shouldThrow_whenOrderNotFound() {
+        StockMovementRequestDTO dto = new StockMovementRequestDTO();
+        dto.setOrderId(1L);
+
+        when(orderRepository.findById(1L)).thenReturn(Optional.empty());
+
+        assertThrows(NoSuchElementException.class,
+                () -> service.createStockMovement(dto));
     }
 
     @Test
-    public void create_shouldNotAllocateToCompletedOrders() {
-        Item item = new Item();
-        item.setId(2L);
-        item.setStockQuantity(10);
-
-        StockMovementRequestDTO dto = new StockMovementRequestDTO();
-        dto.setItemId(2L);
-        dto.setQuantity(10);
-
-        StockMovement stock = new StockMovement();
-        stock.setItem(item);
-        stock.setQuantity(10);
-
+    void create_shouldThrow_whenOrderCompleted() {
         Order order = new Order();
-        order.setItem(item);
-        order.setQuantity(10);
-        order.setFulfilledQuantity(10);
-
-        when(itemRepo.findById(2L)).thenReturn(Optional.of(item));
-        when(mapper.toEntity(dto, item)).thenReturn(stock);
-        when(stockRepo.save(any())).thenReturn(stock);
-        when(orderRepo.findAll()).thenReturn(Collections.singletonList(order));
-
-        Optional<StockMovement> result = service.createStockMovement(dto);
-
-        assertFalse(result.isPresent());
-        verify(allocator, never()).fulfillOrderWithStockMovement(any(), any());
-    }
-
-    @Test
-    public void create_shouldReturnEmpty_whenItemNotFound() {
-        when(itemRepo.findById(13L)).thenReturn(Optional.empty());
+        order.setId(1L);
+        order.setFulfilledQuantity(5);
+        order.setQuantity(5);
 
         StockMovementRequestDTO dto = new StockMovementRequestDTO();
-        dto.setItemId(13L);
+        dto.setOrderId(1L);
         dto.setQuantity(1);
 
-        Optional<StockMovement> result = service.createStockMovement(dto);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
 
-        assertFalse(result.isPresent());
-        verifyNoInteractions(allocator);
+        assertThrows(IllegalStateException.class,
+                () -> service.createStockMovement(dto));
+
+        verify(fileLogService).appendLine(contains("already completed"));
     }
 
     @Test
-    public void create_shouldReturnEmpty_whenNoPendingOrdersExist() {
+    void create_shouldThrow_whenRequestedQtyExceedsRemaining() {
         Item item = new Item();
-        item.setId(1L);
         item.setStockQuantity(10);
 
+        Order order = new Order();
+        order.setId(1L);
+        order.setItem(item);
+        order.setQuantity(5);
+        order.setFulfilledQuantity(4);
+
         StockMovementRequestDTO dto = new StockMovementRequestDTO();
-        dto.setItemId(1L);
-        dto.setQuantity(10);
+        dto.setOrderId(1L);
+        dto.setQuantity(5);
 
-        when(itemRepo.findById(1L)).thenReturn(Optional.of(item));
-        when(orderRepo.findAll()).thenReturn(Collections.emptyList());
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
 
-        Optional<StockMovement> result = service.createStockMovement(dto);
+        assertThrows(IllegalArgumentException.class,
+                () -> service.createStockMovement(dto));
 
-        assertFalse(result.isPresent());
-        verify(allocator, never()).fulfillOrderWithStockMovement(any(), any());
-        verify(stockRepo, never()).save(any());
+        verify(fileLogService).appendLine(contains("Invalid StockMovement"));
     }
+
+    @Test
+    void create_shouldThrow_whenNoStockAvailable() {
+        Item item = new Item();
+        item.setId(1L);
+        item.setStockQuantity(0);
+
+        Order order = new Order();
+        order.setId(1L);
+        order.setItem(item);
+        order.setQuantity(5);
+        order.setFulfilledQuantity(0);
+
+        StockMovementRequestDTO dto = new StockMovementRequestDTO();
+        dto.setOrderId(1L);
+        dto.setQuantity(1);
+
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+        assertThrows(IllegalStateException.class,
+                () -> service.createStockMovement(dto));
+
+        verify(fileLogService).appendLine(contains("No stock available"));
+    }
+
+    @Test
+    void create_shouldAllocateMinBetweenRequestedAndAvailableStock() {
+        Item item = new Item();
+        item.setStockQuantity(2);
+
+        Order order = new Order();
+        order.setId(1L);
+        order.setItem(item);
+        order.setQuantity(10);
+        order.setFulfilledQuantity(5);
+
+        StockMovementRequestDTO dto = new StockMovementRequestDTO();
+        dto.setOrderId(1L);
+        dto.setQuantity(5);
+
+        StockMovement sm = new StockMovement();
+
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(mapper.toEntity(dto, item)).thenReturn(sm);
+        when(repository.save(any())).thenReturn(sm);
+
+        service.createStockMovement(dto);
+
+        assertEquals(0, item.getStockQuantity());
+        assertEquals(2, sm.getQuantity());
+    }
+
 }
+
